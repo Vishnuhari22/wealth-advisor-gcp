@@ -2,7 +2,7 @@
 
 Primary functions use business-context naming (get_benchmark_returns,
 get_approved_commentary, get_fund_news_summary, get_portfolio_beta,
-get_market_indicators) with legacy aliases preserved for skill compatibility.
+get_market_indicators).
 """
 
 import logging
@@ -25,6 +25,21 @@ _BENCHMARK_TICKER_MAP: dict[str, Optional[str]] = {
     "MSCI World": "SPY",
     "NASDAQ": "QQQ",
     "US T-Bill 90-day": None,
+}
+
+_FUND_DISPLAY_NAMES: dict[str, str] = {
+    "VFIAX": "Vanguard 500 Index",
+    "FSPGX": "Fidelity Large Cap Growth",
+    "ABNDX": "American Funds Bond",
+    "VTIAX": "Vanguard Total International",
+    "FBALX": "Fidelity Balanced",
+    "VWIAX": "Vanguard Wellesley Income",
+    "SPY": "S&P 500",
+    "AGG": "US Aggregate Bond",
+    "QQQ": "Nasdaq 100",
+    "EFA": "Intl Developed Markets",
+    "VEA": "Intl Developed Markets",
+    "IWM": "Russell 2000",
 }
 
 
@@ -86,23 +101,38 @@ def get_market_indicators() -> dict:
         return {}
 
 
-def get_portfolio_beta(holdings: list[dict]) -> dict:
-    """Compute weighted portfolio beta vs SPY using 1Y daily returns."""
+def get_portfolio_beta(
+    client_id: str,
+    holdings_fn: Optional[Callable[[str], list[dict]]] = None,
+) -> dict:
+    """Compute weighted portfolio beta vs SPY for a client's holdings."""
+    if holdings_fn is None:
+        return {"portfolio_beta": None, "per_fund": {}, "error": "No holdings provider"}
+
     try:
         import numpy as np
         import yfinance as yf
 
+        rows = holdings_fn(client_id)
+        eligible = [
+            r for r in (rows or [])
+            if (r.get("ticker") or r.get("instrument_id")) not in (None, "", "CASH", "MMKT")
+            and float(r.get("actual_weight") or r.get("weight") or 0.0) > 0
+        ]
+        if not eligible:
+            return {"portfolio_beta": None, "per_fund": {}, "error": "No eligible tickers"}
+
         spy = yf.Ticker("SPY").history(period="1y", auto_adjust=True)["Close"].pct_change().dropna()
         if spy.empty:
-            return {"portfolio_beta": None}
+            return {"portfolio_beta": None, "per_fund": {}, "error": "Insufficient SPY data"}
 
+        total_w = sum(float(r.get("actual_weight") or r.get("weight") or 0.0) for r in eligible) or 1.0
+        per_fund: dict[str, float] = {}
         weighted_beta = 0.0
-        total_weight = 0.0
-        for h in holdings or []:
+
+        for h in eligible:
             ticker = h.get("ticker") or h.get("instrument_id")
-            weight = float(h.get("weight") or h.get("actual_weight") or 0.0)
-            if not ticker or ticker in ("CASH", "MMKT") or weight <= 0:
-                continue
+            weight = float(h.get("actual_weight") or h.get("weight") or 0.0) / total_w
             hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)["Close"].pct_change().dropna()
             aligned = hist.align(spy, join="inner")
             if len(aligned[0]) < 20:
@@ -110,14 +140,16 @@ def get_portfolio_beta(holdings: list[dict]) -> dict:
             cov = float(np.cov(aligned[0], aligned[1])[0][1])
             var = float(np.var(aligned[1]))
             if var > 0:
-                weighted_beta += (cov / var) * weight
-                total_weight += weight
+                beta = round(cov / var, 3)
+                per_fund[ticker] = beta
+                weighted_beta += beta * weight
 
-        beta = round(weighted_beta / total_weight, 2) if total_weight > 0 else None
-        return {"portfolio_beta": beta}
+        if not per_fund:
+            return {"portfolio_beta": None, "per_fund": {}, "error": "Could not compute beta"}
+        return {"portfolio_beta": round(weighted_beta, 3), "per_fund": per_fund, "error": None}
     except Exception as e:
         logger.warning("get_portfolio_beta failed: %s", e)
-        return {"portfolio_beta": None}
+        return {"portfolio_beta": None, "per_fund": {}, "error": str(e)}
 
 
 def _fetch_finnhub_company_news(symbol: str, days: int = 14) -> list[dict]:
@@ -179,17 +211,40 @@ def get_approved_commentary(
     return out
 
 
-def get_fund_news_summary(tickers: List[str]) -> dict:
-    """Fetch recent Finnhub headlines for a list of fund/ETF tickers."""
-    return {
-        t: {
-            "recent_headlines": [a["headline"] for a in _fetch_finnhub_company_news(t)],
-        }
-        for t in (tickers or [])
-        if t and t not in ("CASH", "MMKT")
-    }
+def get_fund_news_summary(
+    client_id: str,
+    holdings_fn: Optional[Callable[[str], list[dict]]] = None,
+) -> list[dict]:
+    """Build advisor-facing fund performance summaries for a client's significant holdings (>5%)."""
+    if holdings_fn is None:
+        return []
 
+    rows = holdings_fn(client_id)
+    sig = [
+        r for r in (rows or [])
+        if float(r.get("actual_weight") or r.get("weight") or 0.0) > 5.0
+        and (r.get("ticker") or r.get("instrument_id")) not in (None, "", "CASH", "MMKT")
+    ]
+    sig.sort(key=lambda r: float(r.get("actual_weight") or r.get("weight") or 0.0), reverse=True)
+    if not sig:
+        return []
 
-# Backward-compatible aliases for unchanged skill prompts
-yfinance_price = get_benchmark_returns
-finnhub_news_with_benchmarks = get_approved_commentary
+    tickers = [r.get("ticker") or r.get("instrument_id") for r in sig[:5]]
+    prices = get_benchmark_returns(tickers)
+
+    items: list[dict] = []
+    for r in sig[:5]:
+        ticker = r.get("ticker") or r.get("instrument_id")
+        fund_name = _FUND_DISPLAY_NAMES.get(ticker, r.get("fund_name") or ticker)
+        weight = round(float(r.get("actual_weight") or r.get("weight") or 0.0), 1)
+        p = prices.get(ticker, {})
+        items.append({
+            "ticker": ticker,
+            "fund_name": fund_name,
+            "asset_class": r.get("asset_class") or "Fund",
+            "weight_pct": weight,
+            "current_price": p.get("current_price"),
+            "return_ytd": p.get("return_ytd"),
+            "return_1y": p.get("return_1y"),
+        })
+    return items

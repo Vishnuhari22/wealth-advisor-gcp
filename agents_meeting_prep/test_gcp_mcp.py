@@ -33,7 +33,7 @@ _stub("google.cloud.bigquery", {"Client": MagicMock(), "QueryJobConfig": MagicMo
 _stub("google.cloud.dataplex_v1", {"CatalogServiceClient": MagicMock(), "EntryView": MagicMock(), "GetEntryRequest": MagicMock(), "ListEntriesRequest": MagicMock()})
 _stub("google.adk")
 _stub("google.adk.agents", {"LlmAgent": MagicMock()})
-_stub("google.adk.models", {"Gemini": type("Gemini", (), {})})
+_stub("google.adk.models", {"Gemini": type("Gemini", (), {"__init__": lambda self, **kw: None})})
 _stub("google.adk.runners", {"InMemoryRunner": MagicMock()})
 _stub("google.adk.tools", {"BaseTool": MagicMock()})
 _stub("google.adk.tools.tool_context", {"ToolContext": MagicMock()})
@@ -188,10 +188,14 @@ def test_thirteen_tools_registered():
 
 
 def test_business_context_aliases():
+    import agents_meeting_prep.agent as agent_mod
+
+    tool_names = [fn.__name__ for fn in agent_mod._AGENT_TOOLS]
+    assert len(tool_names) == len(set(tool_names)), f"Duplicate tool names: {tool_names}"
     assert mp_tools.fetch_all_clients_via_cs is mp_tools.find_client
-    assert mp_tools.get_meeting_context is mp_tools.get_meeting
-    assert mp_tools.yfinance_price is mp_tools.get_benchmark_returns
-    assert mp_tools.finnhub_news_with_benchmarks is mp_tools.get_approved_commentary
+    assert mp_tools.get_meeting_context.__name__ == "get_meeting_context"
+    assert mp_tools.yfinance_price.__name__ == "yfinance_price"
+    assert mp_tools.finnhub_news_with_benchmarks.__name__ == "finnhub_news_with_benchmarks"
     assert agent_runner.run_snapshot is agent_runner.run_portfolio_snapshot
     assert agent_runner.run_risks is agent_runner.run_risks_and_opportunities
     assert agent_runner.run_angles is agent_runner.run_discussion_angles

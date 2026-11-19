@@ -43,9 +43,9 @@ from google.cloud.dataplex_v1 import EntryView, GetEntryRequest, ListEntriesRequ
 from agents_meeting_prep.market_tools import (
     get_approved_commentary as _get_approved_commentary,
     get_benchmark_returns,
-    get_fund_news_summary,
+    get_fund_news_summary as _get_fund_news_summary,
     get_market_indicators,
-    get_portfolio_beta,
+    get_portfolio_beta as _get_portfolio_beta,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def _get_overview_content(entry_name: str) -> str:
 
 # ── Context Set & BigQuery Tools (reused from agents_bq_cs) ─────────────────
 
-def list_catalog_nodes(layer: Optional[str] = None) -> list[dict]:
+def list_catalog_nodes(layer: str = "") -> list[dict]:
     """List available BQ tables from the wealth-advisor-cs Context Set."""
     cache_key = "cs_list_nodes"
     cached = _cache_get(cache_key)
@@ -436,6 +436,16 @@ def get_approved_commentary(client_id: str) -> dict:
     return _get_approved_commentary(client_id, holdings_fn=get_holdings)
 
 
+def get_fund_news_summary(client_id: str) -> list[dict]:
+    """Build advisor-facing fund performance summaries for a client's significant holdings (>5%)."""
+    return _get_fund_news_summary(client_id, holdings_fn=get_holdings)
+
+
+def get_portfolio_beta(client_id: str) -> dict:
+    """Compute weighted portfolio beta vs SPY for a client's holdings."""
+    return _get_portfolio_beta(client_id, holdings_fn=get_holdings)
+
+
 # ── Operational BigQuery Helpers (wealth_meeting_prep — outside Context Set) ─
 
 def today() -> str:
@@ -727,8 +737,20 @@ def compute_pre_flight(client_id: str, today_str: Optional[str] = None) -> dict:
     return {"signal_facts": signal_facts, "scenario_fires": scenario_fires}
 
 
-# Backward-compatible aliases
+# Backward-compatible wrapper functions (distinct __name__ for ADK schemas)
 fetch_all_clients_via_cs = find_client
-get_meeting_context = get_meeting
-yfinance_price = get_benchmark_returns
-finnhub_news_with_benchmarks = get_approved_commentary
+
+
+def get_meeting_context(meeting_id: str, meeting_date: str) -> dict:
+    """Alias for get_meeting: fetch a row from wealth_meeting_prep.meeting_context."""
+    return get_meeting(meeting_id, meeting_date)
+
+
+def yfinance_price(tickers: list[str]) -> dict:
+    """Alias for get_benchmark_returns: fetch live YTD, 2024, 1Y, and 1D returns."""
+    return get_benchmark_returns(tickers)
+
+
+def finnhub_news_with_benchmarks(client_id: str) -> dict:
+    """Alias for get_approved_commentary: fetch Finnhub news with benchmark fallback."""
+    return get_approved_commentary(client_id)
