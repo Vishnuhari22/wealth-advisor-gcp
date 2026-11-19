@@ -159,19 +159,29 @@ _AGENT_TOOLS = [
 ]
 
 
+def _make_instruction_provider(text: str):
+    """Return an ADK InstructionProvider callable so literal {braces} in skills/*.md are not parsed as state variables."""
+    def _provide(_ctx) -> str:
+        return text
+    return _provide
+
+
 def build_step_agent(step: str) -> LlmAgent:
     """Build a lightweight step-scoped LlmAgent for in-process execution."""
     skills = _STEP_SKILLS.get(step, _ALL_SKILLS_ORDER)
+    full_instruction = _CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(skills)
     return LlmAgent(
         name=f"meeting_prep_{step}",
         model=GlobalGemini(model="gemini-3.8-flash"),
         before_tool_callback=_before_tool,
         description=f"Wealth Advisor Meeting Prep Agent ({step} step).",
-        instruction=_CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(skills),
+        instruction=_make_instruction_provider(full_instruction),
         tools=_AGENT_TOOLS,
         sub_agents=[],
     )
 
+
+_ROOT_INSTRUCTION = _CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(_ALL_SKILLS_ORDER)
 
 root_agent = LlmAgent(
     name="meeting_prep_agent",
@@ -182,7 +192,7 @@ root_agent = LlmAgent(
         "risk rules from the wealth-advisor-cs Context Set, queries BigQuery "
         "and live market feeds, and generates structured meeting-prep step JSON."
     ),
-    instruction=_CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(_ALL_SKILLS_ORDER),
+    instruction=_make_instruction_provider(_ROOT_INSTRUCTION),
     tools=_AGENT_TOOLS,
     sub_agents=[],
 )
