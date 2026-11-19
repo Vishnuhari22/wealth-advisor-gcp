@@ -1,0 +1,11 @@
+.env
+.env.*
+catalog/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+agents_meeting_prep/.deployed_resource_name
+agents_meeting_prep/out/

@@ -1,0 +1,11 @@
+{
+  "display_name": "meeting_prep_agent",
+  "env_vars": {
+    "GCP_PROJECT_ID": "agentic-wealthadvisor",
+    "GCP_LOCATION": "us-west1",
+    "BQ_DATASET": "wealth_advisor",
+    "BQ_MP_DATASET": "wealth_meeting_prep",
+    "BQ_LOG_DATASET": "wealth_logs_and_cache",
+    "CONTEXT_SET_ID": "wealth-advisor-cs"
+  }
+}

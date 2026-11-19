@@ -1,0 +1,189 @@
+version: 1.1.0
+name: meeting_prep_advisory_reasoning_map_5_skill_mvp
+purpose: >-
+  Lightweight MVP reasoning map connecting normalized outputs from five reusable
+  specialist skills and verified client context to five executive-friendly advisory
+  scenarios, evidenced tensions, permitted pathways and candidate discussion angles.
+
+mvp_specialist_skills:
+  - id: portfolio_performance_insight
+    produces: [performance_change, benchmark_gap, holding_trend]
+  - id: allocation_drift_policy_insight
+    produces: [allocation_drift, portfolio_overweight, portfolio_underweight, policy_deviation]
+  - id: concentration_risk_insight
+    produces: [security_concentration, issuer_concentration, sector_concentration]
+  - id: liquidity_goal_insight
+    produces: [excess_cash, liquidity_need, goal_approaching, goal_funding_gap, retirement_horizon_approaching, retirement_income_need]
+  - id: market_investment_insight
+    produces: [market_condition_change, investment_review_trigger, market_evidence]
+
+principles:
+  - scenarios_emerge_from_reusable_signals_not_scenario_specific_agents
+  - discussion_angles_are_the_output_not_the_reasoning_map
+  - specialist_facts_and_calculations_remain_authoritative
+  - client_context_changes_relevance_not_specialist_facts
+  - tensions_activate_only_when_both_sides_have_evidence
+  - no_action_and_monitor_are_valid_outcomes
+  - human_advisor_approval_is_required
+
+common_hard_gates:
+  - evidence_sufficiency
+  - freshness
+  - permissions
+  - policy
+  - suitability
+  - product_eligibility_when_applicable
+  - jurisdiction_when_applicable
+
+fusion_rule: >-
+  Fuse signals only when they map to the same approved scenario/decision, refer to
+  compatible portfolio entities or verified client outcomes, are temporally compatible,
+  have sufficient evidence, and create incremental meaning for the meeting.
+
+scenarios:
+  CASH_DEPLOYMENT:
+    executive_label: Cash Deployment
+    resolution_owner: client_led
+    decision_question: How much available cash should remain protected versus be considered for deployment?
+    skills: [allocation_drift_policy_insight, liquidity_goal_insight, market_investment_insight]
+    signals:
+      direct: [excess_cash, liquidity_need]
+      contextual: [allocation_drift, goal_approaching, market_condition_change]
+    required_context: [cash_position, strategic_allocation, verified_liquidity_requirement]
+    client_brain_context: [verified_goals, explicit_priorities, prior_cash_decision_if_available]
+    candidate_tensions:
+      return_vs_liquidity:
+        activate_when: [return_or_deployment_case_supported, liquidity_requirement_supported]
+      opportunity_vs_constraint:
+        activate_when: [market_or_portfolio_opportunity_supported, implementation_constraint_supported]
+    permitted_pathways: [retain, model, phase, deploy_subject_to_approval, monitor, no_action]
+    angle_guidance: >-
+      Establish protected liquidity first, then explore whether any remaining cash merits
+      deployment evaluation. Do not assume all excess cash is investable.
+
+  CONCENTRATION_MANAGEMENT:
+    executive_label: Concentration Management
+    resolution_owner: advisor_led
+    decision_question: Does the concentrated exposure warrant review, and what alternatives should be explored?
+    skills: [concentration_risk_insight, allocation_drift_policy_insight, portfolio_performance_insight]
+    signals:
+      direct: [security_concentration, issuer_concentration, sector_concentration]
+      contextual: [allocation_drift, performance_change, holding_trend]
+    required_context: [position_exposure, concentration_reference, portfolio_context]
+    client_brain_context: [verified_goals, explicit_priorities, prior_concentration_decision_if_available]
+    candidate_tensions:
+      concentration_vs_diversification:
+        activate_when: [material_concentration_supported, diversification_case_supported]
+      current_position_vs_new_evidence:
+        activate_when: [existing_position_supported, material_new_performance_or_market_evidence_supported]
+    permitted_pathways: [retain, model, reduce_subject_to_approval, phase, monitor, no_action]
+    angle_guidance: >-
+      Frame concentration as a portfolio decision requiring review rather than assuming
+      reduction. Tax-aware reasoning is deferred from the MVP unless supplied as governed context.
+
+  RETIREMENT_TRANSITION:
+    executive_label: Retirement Transition
+    resolution_owner: client_led
+    decision_question: Does approaching retirement warrant revisiting current portfolio positioning?
+    skills: [liquidity_goal_insight, allocation_drift_policy_insight, portfolio_performance_insight, market_investment_insight]
+    signals:
+      direct: [retirement_horizon_approaching, retirement_income_need]
+      contextual: [allocation_drift, portfolio_overweight, performance_change, market_condition_change]
+    required_context: [verified_retirement_horizon, portfolio_allocation, verified_income_or_withdrawal_need]
+    client_brain_context: [verified_retirement_goal, explicit_priorities, prior_retirement_decision_if_available]
+    candidate_tensions:
+      growth_vs_protection_or_income:
+        activate_when: [continued_growth_need_supported, protection_or_income_need_supported]
+      stay_the_course_vs_reposition:
+        activate_when: [current_strategy_supported, changed_retirement_context_supported]
+    permitted_pathways: [retain, model, adjust_allocation_subject_to_approval, phase, monitor, no_action]
+    angle_guidance: >-
+      Explore whether the changing time horizon and income need warrant another look at
+      portfolio positioning. Do not assume retirement automatically requires de-risking.
+
+  CHANGING_MARKET_CONDITIONS:
+    executive_label: Changing Market Conditions
+    resolution_owner: advisor_led
+    decision_question: Have market conditions changed enough to warrant revisiting current portfolio positioning?
+    skills: [market_investment_insight, allocation_drift_policy_insight, portfolio_performance_insight, liquidity_goal_insight]
+    signals:
+      direct: [market_condition_change, market_evidence]
+      contextual: [portfolio_underweight, portfolio_overweight, allocation_drift, performance_change, excess_cash]
+    required_context: [current_market_evidence, relevant_portfolio_position]
+    client_brain_context: [verified_goals, explicit_priorities, verified_liquidity_if_relevant, prior_positioning_decision_if_available]
+    candidate_tensions:
+      stay_the_course_vs_revisit:
+        activate_when: [current_strategy_supported, material_new_market_evidence_supported]
+      opportunity_vs_portfolio_fit:
+        activate_when: [market_case_supported, portfolio_or_client_fit_constraint_supported]
+    permitted_pathways: [evaluate, model, phase_subject_to_approval, monitor, no_action]
+    angle_guidance: >-
+      Frame changed market evidence as a reason to evaluate the existing position, not as
+      an investment recommendation. Preserve monitor and no-action outcomes.
+
+  GOAL_FUNDING:
+    executive_label: Goal Funding
+    resolution_owner: client_led
+    decision_question: How should an approaching or underfunded goal be funded while balancing longer-term portfolio objectives?
+    skills: [liquidity_goal_insight, portfolio_performance_insight, allocation_drift_policy_insight]
+    signals:
+      direct: [goal_approaching, goal_funding_gap, liquidity_need]
+      contextual: [performance_change, allocation_drift, excess_cash]
+    required_context: [verified_goal, target_date, funding_requirement, current_funding_source]
+    client_brain_context: [explicit_goal_priority, prior_goal_decision_if_available]
+    candidate_tensions:
+      goal_certainty_vs_growth:
+        activate_when: [funding_certainty_need_supported, continued_growth_need_supported]
+      return_vs_liquidity:
+        activate_when: [return_need_supported, near_term_liquidity_need_supported]
+    permitted_pathways: [protect_funding, model, adjust_contributions, adjust_timing_if_client_led, phase, monitor, no_action]
+    minimum_standalone_threshold:
+      condition: goal_funding_gap signal present AND observation.current_value >= 20
+      effect: >-
+        GOAL_FUNDING must fire as a standalone angle. It may not be absorbed as contextual
+        evidence into another scenario (e.g. CASH_DEPLOYMENT) when this threshold is met.
+        The gap magnitude represents a material client outcome risk that warrants its own
+        discussion regardless of other signals present.
+    angle_guidance: >-
+      Frame the discussion around funding certainty, horizon and portfolio trade-offs.
+      Do not treat a funding gap alone as an instruction to change the portfolio.
+      The angle desc MUST include an explicit statement that the gap is not a portfolio instruction
+      — e.g. "without treating the shortfall as a directive to change the portfolio".
+
+runtime_reasoning:
+  - validate_and_normalize_specialist_signals
+  - apply_freshness_and_materiality_rules
+  - enrich_with_verified_client_context
+  - match_signals_to_mvp_scenario
+  - test_fusion_compatibility
+  - activate_only_evidenced_tensions
+  - determine_permitted_pathways
+  - create_fused_implication
+  - generate_multiple_candidate_discussion_angles
+  - apply_hard_gates_and_quality_scoring
+  - prioritize_and_sequence_for_meeting
+
+angle_output_contract:
+  required_fields:
+    - scenario_id
+    - decision_question
+    - supporting_signal_refs
+    - verified_client_context_refs
+    - fused_implication
+    - activated_tensions
+    - why_now
+    - candidate_discussion_angle
+    - permitted_pathways
+    - confidence
+    - assumptions_to_validate
+    - evidence_refs
+    - limitations
+
+mvp_deferred_capabilities:
+  - dedicated_portfolio_risk_specialist
+  - tax_opportunity_constraint_specialist
+  - interest_rate_exposure_specialist
+  - market_impact_specialist
+  - automated_deferred_decision_open_commitment_specialist
+  - ontology_led_fusion
+  - novel_pattern_discovery
