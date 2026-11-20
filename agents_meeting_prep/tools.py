@@ -14,6 +14,7 @@ Combines:
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -95,10 +96,15 @@ def _bearer_token() -> str:
 
 
 def _serialize_bq_row(row: dict) -> dict:
-    return {
-        k: v.isoformat() if isinstance(v, (datetime, date, dtime)) else v
-        for k, v in row.items()
-    }
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, (datetime, date, dtime)):
+            out[k] = v.isoformat()
+        elif isinstance(v, float) and not math.isfinite(v):
+            out[k] = None
+        else:
+            out[k] = v
+    return out
 
 
 def _bq_table_ref(table: str) -> str:

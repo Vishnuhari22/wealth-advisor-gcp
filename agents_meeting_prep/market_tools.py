@@ -6,9 +6,10 @@ get_market_indicators).
 """
 
 import logging
+import math
 import os
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,14 @@ _FUND_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
+def _safe_float(val: Any, ndigits: int = 2) -> Optional[float]:
+    try:
+        f = float(val)
+        return round(f, ndigits) if math.isfinite(f) else None
+    except Exception:
+        return None
+
+
 def get_benchmark_returns(tickers: List[str]) -> dict:
     """Fetch current price, YTD, 2024, 1Y, and 1D returns for a list of tickers."""
     try:
@@ -58,15 +67,15 @@ def get_benchmark_returns(tickers: List[str]) -> dict:
             continue
         try:
             tk = yf.Ticker(ticker)
-            hist_1y = tk.history(period="1y", auto_adjust=True)["Close"]
-            hist_ytd = tk.history(start=year_start, auto_adjust=True)["Close"]
-            hist_2024 = tk.history(start="2024-01-01", end="2024-12-31", auto_adjust=True)["Close"]
+            hist_1y = tk.history(period="1y", auto_adjust=True)["Close"].dropna()
+            hist_ytd = tk.history(start=year_start, auto_adjust=True)["Close"].dropna()
+            hist_2024 = tk.history(start="2024-01-01", end="2024-12-31", auto_adjust=True)["Close"].dropna()
 
-            current_price = round(float(hist_1y.iloc[-1]), 2) if len(hist_1y) >= 1 else None
-            return_1y = round(((float(hist_1y.iloc[-1]) / float(hist_1y.iloc[0])) - 1) * 100, 2) if len(hist_1y) >= 2 else None
-            return_1d = round(((float(hist_1y.iloc[-1]) / float(hist_1y.iloc[-2])) - 1) * 100, 2) if len(hist_1y) >= 2 else None
-            return_ytd = round(((float(hist_ytd.iloc[-1]) / float(hist_ytd.iloc[0])) - 1) * 100, 2) if len(hist_ytd) >= 2 else None
-            return_2024 = round(((float(hist_2024.iloc[-1]) / float(hist_2024.iloc[0])) - 1) * 100, 2) if len(hist_2024) >= 2 else None
+            current_price = _safe_float(hist_1y.iloc[-1]) if len(hist_1y) >= 1 else None
+            return_1y = _safe_float(((float(hist_1y.iloc[-1]) / float(hist_1y.iloc[0])) - 1) * 100) if len(hist_1y) >= 2 and float(hist_1y.iloc[0]) != 0 else None
+            return_1d = _safe_float(((float(hist_1y.iloc[-1]) / float(hist_1y.iloc[-2])) - 1) * 100) if len(hist_1y) >= 2 and float(hist_1y.iloc[-2]) != 0 else None
+            return_ytd = _safe_float(((float(hist_ytd.iloc[-1]) / float(hist_ytd.iloc[0])) - 1) * 100) if len(hist_ytd) >= 2 and float(hist_ytd.iloc[0]) != 0 else None
+            return_2024 = _safe_float(((float(hist_2024.iloc[-1]) / float(hist_2024.iloc[0])) - 1) * 100) if len(hist_2024) >= 2 and float(hist_2024.iloc[0]) != 0 else None
 
             out[ticker] = {
                 "current_price": current_price,
@@ -93,8 +102,8 @@ def get_market_indicators() -> dict:
         import yfinance as yf
         result: dict = {"as_of": datetime.now().strftime("%Y-%m-%d")}
         for key, sym in (("sp500_current", "SPY"), ("nasdaq_current", "QQQ"), ("vix_current", "^VIX")):
-            hist = yf.Ticker(sym).history(period="5d")["Close"]
-            result[key] = round(float(hist.iloc[-1]), 2) if not hist.empty else None
+            hist = yf.Ticker(sym).history(period="5d")["Close"].dropna()
+            result[key] = _safe_float(hist.iloc[-1]) if not hist.empty else None
         return result
     except Exception as e:
         logger.warning("get_market_indicators failed: %s", e)
