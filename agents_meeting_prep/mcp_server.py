@@ -363,9 +363,10 @@ async def _run_specialist_subtool(
 
 @mcp.tool(
     description=(
-        "Call the Portfolio Snapshot agent to get a client's holdings, total portfolio value, "
-        "cost basis, unrealized gain/loss, YTD/1Y returns, and per-fund trend insights. "
-        "Send what the advisor asked as task, with optional client_id and meeting_id."
+        "Get a client's full portfolio snapshot: holdings table, total value, cost basis, "
+        "unrealized gain/loss, YTD/1Y returns, and per-fund trends. Use for overall holdings "
+        "or valuation queries; use get_holding_trends if only fund trend classifications are needed. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_portfolio_snapshot(
@@ -423,9 +424,11 @@ async def get_portfolio_snapshot(
 
 @mcp.tool(
     description=(
-        "Call the Risks and Opportunities agent to analyze a client's portfolio performance, "
-        "IPS allocation drift, single-fund concentration, liquidity/goal gaps, and risk metrics. "
-        "Send what the advisor asked as task, with optional client_id and meeting_id."
+        "Run a comprehensive multi-domain risk and opportunity assessment across performance, "
+        "IPS allocation drift, concentration, liquidity/goal gaps, market triggers, and risk metrics. "
+        "Use for an overall risk review; use a targeted insight sub-tool (e.g. get_concentration_risk_insights) "
+        "when only one risk domain is requested. Pass the advisor request as task (with client ID or name), "
+        "and optional client_id and meeting_id."
     )
 )
 async def get_risks_and_opportunities(
@@ -482,9 +485,10 @@ async def get_risks_and_opportunities(
 
 @mcp.tool(
     description=(
-        "Call the Discussion Angles agent to generate evidence-backed meeting talking points, "
-        "decision questions, tensions, and next best actions for a client. "
-        "Send what the advisor asked as task, with optional client_id and meeting_id."
+        "Generate full meeting agenda framing: evidence-backed talking points, decision questions, "
+        "portfolio tensions, and next best actions. Use for meeting preparation talking points; "
+        "use get_next_best_actions if only prioritized action items are needed. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_discussion_angles(
@@ -541,9 +545,9 @@ async def get_discussion_angles(
 
 @mcp.tool(
     description=(
-        "Call the Recent Activity agent to retrieve a client's last 6 advisor interactions, "
+        "Retrieve a client's recent CRM interaction timeline: last 6 advisor interactions, "
         "decisions made, communication channels, and sentiment history. "
-        "Send what the advisor asked as task, with optional client_id and meeting_id."
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_recent_activity(
@@ -599,9 +603,10 @@ async def get_recent_activity(
 
 @mcp.tool(
     description=(
-        "Call the Meeting Brief agent to assemble the complete end-to-end advisor meeting brief "
-        "(portfolio snapshot, risk signals, discussion angles, activity timeline, and client profile). "
-        "Send what the advisor asked as task, with optional client_id and meeting_id."
+        "Assemble the complete end-to-end advisor meeting brief combining client profile, "
+        "portfolio snapshot, risk signals, discussion angles, next best actions, activity timeline, "
+        "and fund news. Use only when a full meeting brief is requested, not for single-section questions. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_meeting_brief(
@@ -663,7 +668,8 @@ async def get_meeting_brief(
 @mcp.tool(
     description=(
         "Get per-fund trend classifications (Growing, Stable, Decelerating, Declining) and advisory "
-        "remarks comparing YTD vs 2024 returns without generating the full portfolio snapshot."
+        "remarks comparing YTD vs 2024 returns without generating the full portfolio snapshot. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_holding_trends(
@@ -714,8 +720,9 @@ async def get_holding_trends(
 
 @mcp.tool(
     description=(
-        "Analyze holding-level and portfolio-level performance changes and benchmark gaps "
-        "using live market returns."
+        "Get performance-risk signals only: holding-level and portfolio-level return changes "
+        "and benchmark gaps using live market returns (not full holdings tables). "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_portfolio_performance_insights(
@@ -735,8 +742,9 @@ async def get_portfolio_performance_insights(
 
 @mcp.tool(
     description=(
-        "Check asset-class allocation (Equity, Fixed Income, Cash) against IPS targets and min/max "
-        "ranges to surface allocation drift warnings and policy breaches."
+        "Get allocation-drift signals only: check asset-class allocation (Equity, Fixed Income, Cash) "
+        "against IPS targets and min/max ranges to surface drift warnings and policy breaches. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_allocation_drift_and_policy_insights(
@@ -756,8 +764,9 @@ async def get_allocation_drift_and_policy_insights(
 
 @mcp.tool(
     description=(
-        "Evaluate single-fund, issuer, and sector concentration against the client's IPS "
-        "concentration limits."
+        "Get concentration-risk signals only: evaluate single-fund, issuer, and sector concentration "
+        "against the client's IPS concentration limits. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_concentration_risk_insights(
@@ -777,8 +786,9 @@ async def get_concentration_risk_insights(
 
 @mcp.tool(
     description=(
-        "Evaluate idle cash vs net worth, short-term liquidity needs, goal funding gaps, "
-        "approaching retirement horizons, and behavioral/interaction alerts."
+        "Get liquidity and goal-gap signals only: evaluate idle cash vs net worth, short-term liquidity needs, "
+        "goal funding gaps, approaching retirement horizons, and behavioral/interaction alerts. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_liquidity_and_goal_insights(
@@ -798,8 +808,9 @@ async def get_liquidity_and_goal_insights(
 
 @mcp.tool(
     description=(
-        "Retrieve current broad market indicators (VIX, SPY, QQQ) and relevant fund/benchmark "
-        "commentary to identify market-driven review triggers."
+        "Get market-regime signals only: retrieve broad market indicators (VIX, SPY, QQQ) and relevant "
+        "fund/benchmark commentary to identify market-driven review triggers. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_market_and_investment_insights(
@@ -820,7 +831,8 @@ async def get_market_and_investment_insights(
 @mcp.tool(
     description=(
         "Extract prioritized, actionable advisor preparation tasks and follow-ups (nextBestActions) "
-        "for a client without returning full discussion-angle framing."
+        "for a client without returning full discussion-angle framing. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_next_best_actions(
@@ -853,8 +865,9 @@ async def get_next_best_actions(
 
 @mcp.tool(
     description=(
-        "Generate concise live news and return summaries for the client's significant holdings "
-        "(>5% portfolio weight) without assembling the full meeting brief."
+        "Generate concise live news and return summaries only for the client's significant holdings "
+        "(>5% portfolio weight) without assembling the full meeting brief. "
+        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
     )
 )
 async def get_fund_news(
