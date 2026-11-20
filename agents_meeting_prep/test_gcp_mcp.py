@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -9,6 +10,18 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+
+for _k, _v in {
+    "GCP_PROJECT_ID": "agentic-wealthadvisor",
+    "BQ_DATASET": "wealth_advisor",
+    "BQ_MP_DATASET": "wealth_meeting_prep",
+    "BQ_LOG_DATASET": "wealth_logs_and_cache",
+    "GCP_LOCATION": "us-west1",
+    "CONTEXT_SET_ID": "wealth-advisor-cs-test",
+    "MEETING_PREP_AGENT_MODE": "in_process",
+    "PORT": "8080",
+}.items():
+    os.environ.setdefault(_k, _v)
 
 _WA_GCP = Path(__file__).resolve().parents[1]
 if str(_WA_GCP) not in sys.path:

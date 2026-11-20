@@ -29,9 +29,18 @@ if _COMBINED_CA.exists():
 
 logger = logging.getLogger(__name__)
 
-PROJECT = os.getenv("GCP_PROJECT_ID", "agentic-wealthadvisor").strip()
-LOCATION = os.getenv("GCP_LOCATION", "us-west1").strip()
-AGENT_MODE = os.getenv("MEETING_PREP_AGENT_MODE", "in_process").strip().lower()
+def _require_env(name: str) -> str:
+    val = os.getenv(name, "").strip()
+    if not val:
+        raise RuntimeError(
+            f"Missing required environment variable: {name}. Set it in .env or runtime environment."
+        )
+    return val
+
+
+PROJECT = _require_env("GCP_PROJECT_ID")
+LOCATION = _require_env("GCP_LOCATION")
+AGENT_MODE = _require_env("MEETING_PREP_AGENT_MODE").lower()
 
 _ENGINE: Any = None
 

@@ -51,12 +51,21 @@ from agents_meeting_prep.market_tools import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT = os.getenv("GCP_PROJECT_ID", "agentic-wealthadvisor").strip()
-DATASET = os.getenv("BQ_DATASET", "wealth_advisor").strip()
-MP_DATASET = os.getenv("BQ_MP_DATASET", "wealth_meeting_prep").strip()
-LOG_DATASET = os.getenv("BQ_LOG_DATASET", "wealth_logs_and_cache").strip()
-LOCATION = os.getenv("GCP_LOCATION", "us-west1").strip()
-CONTEXT_SET_ID = os.getenv("CONTEXT_SET_ID", "wealth-advisor-cs").strip()
+def _require_env(name: str) -> str:
+    val = os.getenv(name, "").strip()
+    if not val:
+        raise RuntimeError(
+            f"Missing required environment variable: {name}. Set it in .env or runtime environment."
+        )
+    return val
+
+
+PROJECT = _require_env("GCP_PROJECT_ID")
+DATASET = _require_env("BQ_DATASET")
+MP_DATASET = _require_env("BQ_MP_DATASET")
+LOG_DATASET = _require_env("BQ_LOG_DATASET")
+LOCATION = _require_env("GCP_LOCATION")
+CONTEXT_SET_ID = _require_env("CONTEXT_SET_ID")
 
 CS_EG_NAME = f"projects/{PROJECT}/locations/{LOCATION}/entryGroups/{CONTEXT_SET_ID}"
 LOOKUP_URL = f"https://dataplex.googleapis.com/v1/projects/{PROJECT}/locations/{LOCATION}:lookupContext"

@@ -164,6 +164,7 @@ def get_portfolio_beta(
 def _fetch_finnhub_company_news(symbol: str, days: int = 14) -> list[dict]:
     api_key = os.getenv("FINNHUB_API_KEY", "").strip()
     if not api_key:
+        logger.warning("FINNHUB_API_KEY is not set; skipping Finnhub company news lookup for %s.", symbol)
         return []
     try:
         import finnhub

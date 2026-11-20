@@ -57,12 +57,22 @@ from agents_meeting_prep.tools import (
 
 logger = logging.getLogger(__name__)
 
+_port_raw = (os.getenv("PORT") or os.getenv("MEETING_PREP_MCP_PORT") or "").strip()
+if not _port_raw:
+    raise RuntimeError(
+        "Missing required environment variable: PORT or MEETING_PREP_MCP_PORT. Set it in .env or runtime environment."
+    )
+try:
+    _mcp_port = int(_port_raw)
+except ValueError as exc:
+    raise RuntimeError(f"Invalid MCP port value {_port_raw!r}: must be an integer.") from exc
+
 mcp = FastMCP(
     "meeting_prep",
     stateless_http=True,
     json_response=True,
     host="0.0.0.0",
-    port=int(os.getenv("PORT", os.getenv("MEETING_PREP_MCP_PORT", "8080"))),
+    port=_mcp_port,
 )
 
 _SUB_INSIGHT_CACHE_KEYS = (
