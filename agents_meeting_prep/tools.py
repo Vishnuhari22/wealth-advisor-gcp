@@ -252,6 +252,20 @@ def lookup_schema(node_name: str) -> dict:
         return {"error": ctx_result["error"]}
 
     cols = _parse_columns_from_yaml(ctx_result.get("context", ""))
+    if not cols:
+        tname = re.sub(r"[^A-Za-z0-9_]", "", node_name.lower())
+        try:
+            bq_cols = _BQ.query(
+                f"SELECT column_name AS name, data_type AS type, is_nullable AS mode "
+                f"FROM `{PROJECT}.{DATASET}.INFORMATION_SCHEMA.COLUMNS` "
+                f"WHERE LOWER(table_name) = '{tname}' ORDER BY ordinal_position"
+            ).result()
+            cols = [
+                {"name": r["name"], "type": r["type"], "mode": r["mode"]}
+                for r in bq_cols
+            ]
+        except Exception as e:
+            logger.warning("INFORMATION_SCHEMA fallback failed for %s: %s", node_name, e)
     overview = _get_overview_content(entry_name)
     result = {
         "node_name": node_name.lower(),
@@ -387,13 +401,26 @@ def get_holdings(client_id: str) -> list[dict]:
     h_tbl = _cs_table("holding")
     i_tbl = _cs_table("instrument")
     sql = (
-        f"SELECT h.*, i.name AS fund_name, i.symbol AS ticker, i.asset_class, i.benchmark "
+        f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class, i.benchmark_index AS benchmark "
         f"FROM {h_tbl} h "
         f"JOIN {a_tbl} a ON h.account_id = a.account_id "
         f"JOIN {i_tbl} i ON h.instrument_id = i.instrument_id "
         f"WHERE a.client_id = '{cid}'"
     )
     rows = execute_bq_query(sql)
+    if rows and "error" in rows[0]:
+        logger.warning("get_holdings primary query failed for %s: %s", cid, rows[0]["error"])
+        fallback_sql = (
+            f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class "
+            f"FROM {h_tbl} h "
+            f"JOIN {a_tbl} a ON h.account_id = a.account_id "
+            f"JOIN {i_tbl} i ON h.instrument_id = i.instrument_id "
+            f"WHERE a.client_id = '{cid}'"
+        )
+        rows = execute_bq_query(fallback_sql)
+        if rows and "error" in rows[0]:
+            logger.error("get_holdings fallback query failed for %s: %s", cid, rows[0]["error"])
+            return []
     return [r for r in rows if "error" not in r]
 
 
@@ -415,7 +442,12 @@ def get_ips(client_id: str) -> dict:
     cid = _safe_cid(client_id)
     tbl = _cs_table("investment_policy_statement")
     rows = execute_bq_query(f"SELECT * FROM {tbl} WHERE client_id = '{cid}' LIMIT 1")
-    return rows[0] if rows and "error" not in rows[0] else {}
+    if not rows or "error" in rows[0]:
+        return {}
+    ips = rows[0]
+    if ips.get("equity_min") is None or ips.get("max_single_fund_weight") is None:
+        return _enrich_ips_bands(ips, get_client_profile(cid))
+    return ips
 
 
 def get_prior_plan(client_id: str) -> list[dict]:
@@ -593,11 +625,64 @@ def _months_between(today_str: str, target_str: str) -> Optional[int]:
         return None
 
 
+_DEFAULT_IPS_BANDS_BY_TOLERANCE: dict[str, dict[str, float]] = {
+    "conservative": {
+        "equity_min": 20.0, "equity_target": 30.0, "equity_max": 40.0,
+        "bond_min": 40.0, "bond_target": 50.0, "bond_max": 60.0,
+        "cash_min": 10.0, "cash_target": 20.0, "cash_max": 30.0,
+        "max_single_fund_weight": 20.0,
+    },
+    "moderate": {
+        "equity_min": 50.0, "equity_target": 60.0, "equity_max": 70.0,
+        "bond_min": 15.0, "bond_target": 20.0, "bond_max": 30.0,
+        "cash_min": 5.0, "cash_target": 20.0, "cash_max": 30.0,
+        "max_single_fund_weight": 20.0,
+    },
+    "moderate growth": {
+        "equity_min": 60.0, "equity_target": 70.0, "equity_max": 80.0,
+        "bond_min": 15.0, "bond_target": 20.0, "bond_max": 30.0,
+        "cash_min": 5.0, "cash_target": 10.0, "cash_max": 15.0,
+        "max_single_fund_weight": 20.0,
+    },
+    "growth": {
+        "equity_min": 70.0, "equity_target": 80.0, "equity_max": 95.0,
+        "bond_min": 5.0, "bond_target": 15.0, "bond_max": 25.0,
+        "cash_min": 2.0, "cash_target": 5.0, "cash_max": 10.0,
+        "max_single_fund_weight": 20.0,
+    },
+    "aggressive": {
+        "equity_min": 75.0, "equity_target": 85.0, "equity_max": 95.0,
+        "bond_min": 0.0, "bond_target": 10.0, "bond_max": 20.0,
+        "cash_min": 2.0, "cash_target": 5.0, "cash_max": 10.0,
+        "max_single_fund_weight": 20.0,
+    },
+    "aggressive growth": {
+        "equity_min": 75.0, "equity_target": 85.0, "equity_max": 95.0,
+        "bond_min": 0.0, "bond_target": 10.0, "bond_max": 20.0,
+        "cash_min": 2.0, "cash_target": 5.0, "cash_max": 10.0,
+        "max_single_fund_weight": 20.0,
+    },
+}
+
+
+def _enrich_ips_bands(ips: dict, client: dict) -> dict:
+    """Fill missing IPS band columns from stated_risk_tolerance without overwriting DB values."""
+    if not ips:
+        return ips
+    tol = str(client.get("stated_risk_tolerance") or "moderate").strip().lower()
+    bands = _DEFAULT_IPS_BANDS_BY_TOLERANCE.get(tol, _DEFAULT_IPS_BANDS_BY_TOLERANCE["moderate"])
+    enriched = dict(ips)
+    for k, v in bands.items():
+        if enriched.get(k) is None:
+            enriched[k] = v
+    return enriched
+
+
 def compute_pre_flight(client_id: str, today_str: Optional[str] = None) -> dict:
     """Run deterministic threshold checks using business-context Context Set tools."""
     today_str = today_str or date.today().isoformat()
     client = get_client_profile(client_id)
-    ips = get_ips(client_id)
+    ips = _enrich_ips_bands(get_ips(client_id), client)
     holdings = get_holdings(client_id)
     goals = get_prior_plan(client_id)
     interactions = get_crm_interactions(client_id, limit=2)
