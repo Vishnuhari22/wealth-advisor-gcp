@@ -126,7 +126,7 @@ gcloud run deploy meeting-prep-mcp \
   --source . \
   --region us-west1 \
   --service-account wealthadvisor@agentic-wealthadvisor.iam.gserviceaccount.com \
-  --set-env-vars GCP_PROJECT_ID=agentic-wealthadvisor,GCP_LOCATION=us-west1,BQ_DATASET=wealth_advisor,BQ_MP_DATASET=wealth_meeting_prep,BQ_LOG_DATASET=wealth_logs_and_cache,CONTEXT_SET_ID=wealth-advisor-cs,MEETING_PREP_AGENT_MODE=in_process,FINNHUB_API_KEY=<your_finnhub_key> \
+  --set-env-vars GCP_PROJECT_ID=agentic-wealthadvisor,GCP_LOCATION=us-west1,BQ_DATASET=wealth_advisor,BQ_MP_DATASET=wealth_meeting_prep,BQ_LOG_DATASET=wealth_logs_and_cache,CONTEXT_SET_ID=wealth-advisor-cs-v1,MEETING_PREP_AGENT_MODE=in_process,FINNHUB_API_KEY=<your_finnhub_key> \
   --timeout 300 \
   --memory 2Gi \
   --allow-unauthenticated
