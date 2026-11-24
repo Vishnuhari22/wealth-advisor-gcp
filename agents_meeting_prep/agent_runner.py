@@ -45,17 +45,50 @@ AGENT_MODE = _require_env("MEETING_PREP_AGENT_MODE").lower()
 _ENGINE: Any = None
 
 
+def _try_parse_dict(text: str) -> Optional[dict]:
+    try:
+        val = json.loads(text, strict=False)
+    except Exception:
+        return None
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        try:
+            inner = json.loads(val, strict=False)
+            if isinstance(inner, dict):
+                return inner
+        except Exception:
+            return None
+    return None
+
+
 def _strip_json(raw: str) -> dict:
     clean = (raw or "").strip()
-    clean = re.sub(r"^```(?:json)?\s*", "", clean)
-    clean = re.sub(r"\s*```$", "", clean)
     if not clean:
         return {}
-    try:
-        return json.loads(clean)
-    except Exception:
-        logger.error("Agent returned non-JSON output: %s", clean[:500])
-        return {}
+
+    parsed = _try_parse_dict(clean)
+    if parsed is not None:
+        return parsed
+
+    for m in reversed(re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", clean)):
+        parsed = _try_parse_dict(m.strip())
+        if parsed is not None:
+            return parsed
+
+    decoder = json.JSONDecoder(strict=False)
+    idx = clean.find("{")
+    while idx != -1:
+        try:
+            obj, _ = decoder.raw_decode(clean, idx)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+        idx = clean.find("{", idx + 1)
+
+    logger.error("Agent returned non-JSON output: %s", clean[:500])
+    return {}
 
 
 async def _run_in_process_async(step: str, prompt: str, user_id: str = "mcp-server") -> dict:
@@ -68,7 +101,7 @@ async def _run_in_process_async(step: str, prompt: str, user_id: str = "mcp-serv
     runner = InMemoryRunner(agent=agent, app_name="meeting_prep")
     session = await runner.session_service.create_session(app_name="meeting_prep", user_id=user_id)
 
-    chunks: list[str] = []
+    event_texts: list[str] = []
     async for event in runner.run_async(
         user_id=user_id,
         session_id=session.id,
@@ -76,11 +109,21 @@ async def _run_in_process_async(step: str, prompt: str, user_id: str = "mcp-serv
     ):
         content = getattr(event, "content", None)
         if content and getattr(content, "parts", None):
+            parts_text = []
             for p in content.parts:
+                if getattr(p, "thought", False):
+                    continue
                 text = getattr(p, "text", None)
                 if text:
-                    chunks.append(text)
-    return _strip_json("".join(chunks))
+                    parts_text.append(text)
+            if parts_text:
+                event_texts.append("".join(parts_text))
+
+    for evt_text in reversed(event_texts):
+        parsed = _strip_json(evt_text)
+        if parsed:
+            return parsed
+    return _strip_json("".join(event_texts)) if event_texts else {}
 
 
 def _invoke_in_process_step(step: str, prompt: str, user_id: str = "mcp-server") -> dict:
@@ -124,17 +167,26 @@ def _get_engine():
 def _invoke_remote_step(step: str, prompt: str, user_id: str = "mcp-server") -> dict:
     engine = _get_engine()
     session = engine.create_session(user_id=user_id or "mcp-server")
-    chunks: list[str] = []
+    event_texts: list[str] = []
     for event in engine.stream_query(
         session_id=session["id"],
         message=prompt,
         user_id=user_id or "mcp-server",
     ):
+        parts_text = []
         for p in event.get("content", {}).get("parts", []):
+            if isinstance(p, dict) and p.get("thought"):
+                continue
             text = p.get("text") if isinstance(p, dict) else None
             if text:
-                chunks.append(text)
-    return _strip_json("".join(chunks))
+                parts_text.append(text)
+        if parts_text:
+            event_texts.append("".join(parts_text))
+    for evt_text in reversed(event_texts):
+        parsed = _strip_json(evt_text)
+        if parsed:
+            return parsed
+    return _strip_json("".join(event_texts)) if event_texts else {}
 
 
 def _invoke_step(step: str, prompt: str, user_id: str = "mcp-server") -> dict:

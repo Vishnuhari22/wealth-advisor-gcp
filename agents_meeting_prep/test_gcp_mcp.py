@@ -317,3 +317,16 @@ def test_meeting_brief_progress_tracking(fake_gcp, monkeypatch):
     assert [w[1]["pct"] for w in writes] == [10, 100]
     assert writes[-1][1]["done"] is True
     assert writes[-1][1]["result"] == res_warm
+
+
+def test_strip_json_handles_prose_fences_and_double_encoded():
+    # Plain JSON string
+    assert agent_runner._strip_json('{"client": {"name": "Mary"}}') == {"client": {"name": "Mary"}}
+    # Double-encoded JSON string
+    assert agent_runner._strip_json(json.dumps('{"client": {"name": "Mary"}}')) == {"client": {"name": "Mary"}}
+    # Prose before/after fenced JSON
+    wrapped = 'Fetching profile...\n```json\n{"client": {"name": "Mary"}}\n```\nDone.'
+    assert agent_runner._strip_json(wrapped) == {"client": {"name": "Mary"}}
+    # Raw newline inside string literal + leading prose
+    raw_nl = 'Here is the brief: {"nbcScript": "Line 1\nLine 2"}'
+    assert agent_runner._strip_json(raw_nl) == {"nbcScript": "Line 1\nLine 2"}
