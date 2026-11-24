@@ -54,7 +54,9 @@ def _merge_risk_metrics(llm_metrics: list, pf_metrics: list) -> list:
     for pm in pf_metrics:
         lbl = pm.get("label")
         lm = by_label.get(lbl)
-        if lm and lm.get("value") not in (None, "", "Unknown"):
+        if pm.get("value") not in (None, "", "Unknown"):
+            merged.append(pm)
+        elif lm and lm.get("value") not in (None, "", "Unknown"):
             merged.append(lm)
         else:
             merged.append(pm)
