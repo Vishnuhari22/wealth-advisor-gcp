@@ -16,6 +16,7 @@ from google.adk.models import Gemini
 from google.adk.tools import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import Client
+from google.genai.types import GenerateContentConfig, ThinkingConfig
 
 from agents_meeting_prep.tools import (
     execute_bq_query,
@@ -166,13 +167,21 @@ def _make_instruction_provider(text: str):
     return _provide
 
 
+_MODEL_NAME = "gemini-3.5-flash-lite"
+_LOW_THINKING_STEPS = {"risks", "angles", "assemble"}
+
+
 def build_step_agent(step: str) -> LlmAgent:
     """Build a lightweight step-scoped LlmAgent for in-process execution."""
     skills = _STEP_SKILLS.get(step, _ALL_SKILLS_ORDER)
     full_instruction = _CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(skills)
+    thinking_level = "low" if step in _LOW_THINKING_STEPS else "minimal"
     return LlmAgent(
         name=f"meeting_prep_{step}",
-        model=GlobalGemini(model="gemini-3.8-flash"),
+        model=GlobalGemini(model=_MODEL_NAME),
+        generate_content_config=GenerateContentConfig(
+            thinking_config=ThinkingConfig(thinking_level=thinking_level)
+        ),
         before_tool_callback=_before_tool,
         description=f"Wealth Advisor Meeting Prep Agent ({step} step).",
         instruction=_make_instruction_provider(full_instruction),
@@ -185,7 +194,10 @@ _ROOT_INSTRUCTION = _CATALOG_INSTRUCTION + "\n\n---\n\n" + _load_skills(_ALL_SKI
 
 root_agent = LlmAgent(
     name="meeting_prep_agent",
-    model=GlobalGemini(model="gemini-3.8-flash"),
+    model=GlobalGemini(model=_MODEL_NAME),
+    generate_content_config=GenerateContentConfig(
+        thinking_config=ThinkingConfig(thinking_level="low")
+    ),
     before_tool_callback=_before_tool,
     description=(
         "Wealth Advisor Meeting Prep Agent that discovers schemas, JOINs, and "

@@ -51,7 +51,12 @@ _stub("google.adk.runners", {"InMemoryRunner": MagicMock()})
 _stub("google.adk.tools", {"BaseTool": MagicMock()})
 _stub("google.adk.tools.tool_context", {"ToolContext": MagicMock()})
 _stub("google.genai", {"Client": MagicMock()})
-_stub("google.genai.types", {"Content": MagicMock(), "Part": MagicMock()})
+_stub("google.genai.types", {
+    "Content": MagicMock(),
+    "Part": MagicMock(),
+    "GenerateContentConfig": MagicMock(),
+    "ThinkingConfig": MagicMock(),
+})
 _stub("vertexai", {"init": MagicMock()})
 _stub("vertexai.agent_engines", {"get": MagicMock()})
 

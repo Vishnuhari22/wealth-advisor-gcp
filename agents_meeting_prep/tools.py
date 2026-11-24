@@ -400,8 +400,10 @@ def get_holdings(client_id: str) -> list[dict]:
     a_tbl = _cs_table("account")
     h_tbl = _cs_table("holding")
     i_tbl = _cs_table("instrument")
+    inst_cols = {c.get("name", "").lower() for c in (lookup_schema("instrument").get("columns") or [])}
+    extra_cols = ", i.benchmark_index AS benchmark" if "benchmark_index" in inst_cols else ""
     sql = (
-        f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class, i.benchmark_index AS benchmark "
+        f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class{extra_cols} "
         f"FROM {h_tbl} h "
         f"JOIN {a_tbl} a ON h.account_id = a.account_id "
         f"JOIN {i_tbl} i ON h.instrument_id = i.instrument_id "
@@ -409,17 +411,20 @@ def get_holdings(client_id: str) -> list[dict]:
     )
     rows = execute_bq_query(sql)
     if rows and "error" in rows[0]:
-        logger.warning("get_holdings primary query failed for %s: %s", cid, rows[0]["error"])
-        fallback_sql = (
-            f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class "
-            f"FROM {h_tbl} h "
-            f"JOIN {a_tbl} a ON h.account_id = a.account_id "
-            f"JOIN {i_tbl} i ON h.instrument_id = i.instrument_id "
-            f"WHERE a.client_id = '{cid}'"
-        )
-        rows = execute_bq_query(fallback_sql)
-        if rows and "error" in rows[0]:
-            logger.error("get_holdings fallback query failed for %s: %s", cid, rows[0]["error"])
+        logger.warning("get_holdings query failed for %s: %s", cid, rows[0]["error"])
+        if extra_cols:
+            fallback_sql = (
+                f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class "
+                f"FROM {h_tbl} h "
+                f"JOIN {a_tbl} a ON h.account_id = a.account_id "
+                f"JOIN {i_tbl} i ON h.instrument_id = i.instrument_id "
+                f"WHERE a.client_id = '{cid}'"
+            )
+            rows = execute_bq_query(fallback_sql)
+            if rows and "error" in rows[0]:
+                logger.error("get_holdings fallback query failed for %s: %s", cid, rows[0]["error"])
+                return []
+        else:
             return []
     return [r for r in rows if "error" not in r]
 
