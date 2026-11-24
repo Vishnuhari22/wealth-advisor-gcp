@@ -17,7 +17,12 @@ from agents_meeting_prep.agent_runner import (
     run_recent_activity,
     run_risks_and_opportunities,
 )
-from agents_meeting_prep.tools import compute_pre_flight, get_cached, put_cached
+from agents_meeting_prep.tools import (
+    compute_pre_flight,
+    get_cached,
+    get_fund_news_summary,
+    put_cached,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,73 @@ _SUB_INSIGHT_KEYS = (
     "sub_liquidity_goal_insights",
     "sub_market_insights",
 )
+
+
+_SKILL_SECTION_ORDER: list[tuple[str, tuple[str, ...], str]] = [
+    ("Portfolio Performance", ("portfolio-performance-insight-mvp",), "portfolio-performance-insight-mvp"),
+    ("Allocation & Policy", ("allocation-drift-policy-insight-mvp",), "allocation-drift-policy-insight-mvp"),
+    ("Concentration Risk", ("concentration-risk-insight-mvp",), "concentration-risk-insight-mvp"),
+    ("Liquidity & Goals", ("liquidity-goal-insight-mvp", "client_monitor"), "liquidity-goal-insight-mvp"),
+    ("Market & Investment", ("market-investment-insight-mvp",), "market-investment-insight-mvp"),
+]
+
+
+def _merge_risk_metrics(llm_metrics: list, pf_metrics: list) -> list:
+    if not pf_metrics:
+        return llm_metrics or []
+    if not llm_metrics:
+        return list(pf_metrics)
+    by_label = {m.get("label"): m for m in llm_metrics if isinstance(m, dict) and m.get("label")}
+    merged = []
+    for pm in pf_metrics:
+        lbl = pm.get("label")
+        lm = by_label.get(lbl)
+        if lm and lm.get("value") not in (None, "", "Unknown"):
+            merged.append(lm)
+        else:
+            merged.append(pm)
+    return merged
+
+
+def _ensure_skill_sections(brief_risk: dict, signals: list) -> list:
+    existing = brief_risk.get("skillSections") or []
+    by_label = {s.get("label"): s for s in existing if isinstance(s, dict) and s.get("label")}
+    sections = []
+    for label, producers, primary in _SKILL_SECTION_ORDER:
+        matching = [s for s in (signals or []) if isinstance(s, dict) and s.get("producer_skill") in producers]
+        cur = by_label.get(label)
+        cur_sigs = cur.get("signals") if isinstance(cur, dict) and isinstance(cur.get("signals"), list) else []
+        sections.append({
+            "label": label,
+            "producer_skill": (cur or {}).get("producer_skill") or primary,
+            "signals": cur_sigs if cur_sigs else matching,
+        })
+    return sections
+
+
+def _backfill_fund_news(client_id: str) -> list[dict]:
+    items = get_fund_news_summary(client_id) or []
+    out = []
+    for item in items:
+        tkr = item.get("ticker", "")
+        fname = item.get("fund_name") or tkr
+        w = item.get("weight_pct")
+        ytd = item.get("return_ytd")
+        r1y = item.get("return_1y")
+        if ytd is not None:
+            perf = f"delivered {ytd}% YTD" if ytd >= 0 else f"is down {abs(ytd)}% YTD"
+        elif r1y is not None:
+            perf = f"posted {r1y}% over the past year"
+        else:
+            perf = "remains a core portfolio holding"
+        w_str = f" at {w}% of the portfolio" if w is not None else ""
+        out.append({
+            "ticker": tkr,
+            "fund_name": fname,
+            "weight_pct": w,
+            "summary": f"{fname} ({tkr}){w_str} {perf}.",
+        })
+    return out
 
 
 async def run_meeting_prep(
@@ -95,7 +167,11 @@ async def run_meeting_prep(
             put_cached(step2_key, today, risks_output, user_id)
     _emit(50, "Evaluating risk exposure and market signals...")
     signals = (risks_output or {}).get("signals", [])
-    risk_section = (risks_output or {}).get("risk", {"riskMetrics": []})
+    risk_section = dict((risks_output or {}).get("risk") or {"riskMetrics": []})
+    risk_section["riskMetrics"] = _merge_risk_metrics(
+        risk_section.get("riskMetrics", []),
+        pre_flight.get("risk_metrics", []),
+    )
 
     # Steps 3 + 4 — Parallel
     step3_key = f"step_angles#{client_id}"
@@ -159,6 +235,19 @@ async def run_meeting_prep(
 
     if not brief:
         raise RuntimeError(f"BriefAssembler returned empty result for client_id={client_id}")
+
+    # Deterministic backfill for riskMetrics, skillSections, and fundNews if omitted by lightweight LLM
+    brief_risk = brief.setdefault("risk", {})
+    brief_risk["riskMetrics"] = _merge_risk_metrics(
+        brief_risk.get("riskMetrics", []),
+        risk_section.get("riskMetrics", []),
+    )
+    brief_risk["skillSections"] = _ensure_skill_sections(brief_risk, signals)
+    if not brief.get("fundNews"):
+        try:
+            brief["fundNews"] = await asyncio.to_thread(_backfill_fund_news, client_id)
+        except Exception as e:
+            logger.warning("fundNews backfill failed for %s: %s", client_id, e)
 
     try:
         from agents_meeting_prep.pptx_utils import html_to_pptx

@@ -330,3 +330,28 @@ def test_strip_json_handles_prose_fences_and_double_encoded():
     # Raw newline inside string literal + leading prose
     raw_nl = 'Here is the brief: {"nbcScript": "Line 1\nLine 2"}'
     assert agent_runner._strip_json(raw_nl) == {"nbcScript": "Line 1\nLine 2"}
+
+
+def test_force_refresh_bypasses_cache_and_backfills_risk(fake_gcp):
+    calls = fake_gcp["calls"]
+    # First call warms cache
+    r1 = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan"))
+    assert r1["status"] == "ok" and calls["assemble"] == 1
+    # Second call hits cache (no extra assemble call)
+    r2 = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan"))
+    assert r2["status"] == "ok" and calls["assemble"] == 1
+    # force_refresh=True bypasses cache
+    r3 = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan", force_refresh=True))
+    assert r3["status"] == "ok" and calls["assemble"] == 2
+    # "force_refresh" keyword in task also bypasses cache
+    r4 = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan force_refresh"))
+    assert r4["status"] == "ok" and calls["assemble"] == 3
+    # skillSections always has all 5 canonical sections
+    labels = [s["label"] for s in r4["data"]["result"]["risk"]["skillSections"]]
+    assert labels == [
+        "Portfolio Performance",
+        "Allocation & Policy",
+        "Concentration Risk",
+        "Liquidity & Goals",
+        "Market & Investment",
+    ]

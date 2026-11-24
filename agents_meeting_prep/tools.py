@@ -401,7 +401,14 @@ def get_holdings(client_id: str) -> list[dict]:
     h_tbl = _cs_table("holding")
     i_tbl = _cs_table("instrument")
     inst_cols = {c.get("name", "").lower() for c in (lookup_schema("instrument").get("columns") or [])}
-    extra_cols = ", i.benchmark_index AS benchmark" if "benchmark_index" in inst_cols else ""
+    optional_inst = []
+    if "benchmark_index" in inst_cols:
+        optional_inst.append("i.benchmark_index AS benchmark")
+    if "category" in inst_cols:
+        optional_inst.append("i.category")
+    if "return_2024" in inst_cols:
+        optional_inst.append("i.return_2024")
+    extra_cols = (", " + ", ".join(optional_inst)) if optional_inst else ""
     sql = (
         f"SELECT h.*, i.name AS fund_name, i.instrument_id AS ticker, i.asset_class{extra_cols} "
         f"FROM {h_tbl} h "
@@ -426,7 +433,17 @@ def get_holdings(client_id: str) -> list[dict]:
                 return []
         else:
             return []
-    return [r for r in rows if "error" not in r]
+    valid_rows = [r for r in rows if "error" not in r]
+    total_mv = sum(float(r.get("market_value") or 0.0) for r in valid_rows)
+    if total_mv > 0:
+        for r in valid_rows:
+            w = r.get("actual_weight")
+            if w is None:
+                w = round(100.0 * float(r.get("market_value") or 0.0) / total_mv, 2)
+                r["actual_weight"] = w
+            r.setdefault("weight", w)
+            r.setdefault("weight_pct", w)
+    return valid_rows
 
 
 def get_valuations(client_id: str) -> dict:
@@ -464,12 +481,22 @@ def get_prior_plan(client_id: str) -> list[dict]:
 
 
 def get_crm_interactions(client_id: str, limit: int = 6) -> list[dict]:
-    """Fetch recent CRM interactions via Context Set discovery."""
+    """Fetch recent CRM interactions (joined with Decision when present) via Context Set discovery."""
     cid = _safe_cid(client_id)
-    tbl = _cs_table("interaction")
-    rows = execute_bq_query(
-        f"SELECT * FROM {tbl} WHERE client_id = '{cid}' ORDER BY date DESC LIMIT {int(limit)}"
+    i_tbl = _cs_table("interaction")
+    d_tbl = _cs_table("decision")
+    join_sql = (
+        f"SELECT i.*, d.type AS decision_type, d.initiated_by, d.description AS decision_description "
+        f"FROM {i_tbl} i "
+        f"LEFT JOIN {d_tbl} d ON d.interaction_id = i.interaction_id "
+        f"WHERE i.client_id = '{cid}' ORDER BY i.date DESC LIMIT {int(limit)}"
     )
+    rows = execute_bq_query(join_sql)
+    if rows and "error" in rows[0]:
+        logger.warning("get_crm_interactions join failed for %s, falling back: %s", cid, rows[0]["error"])
+        rows = execute_bq_query(
+            f"SELECT * FROM {i_tbl} WHERE client_id = '{cid}' ORDER BY date DESC LIMIT {int(limit)}"
+        )
     return [r for r in rows if "error" not in r]
 
 
@@ -839,7 +866,89 @@ def compute_pre_flight(client_id: str, today_str: Optional[str] = None) -> dict:
             "materiality": "medium" if vix < 25.0 else "high",
         })
 
-    return {"signal_facts": signal_facts, "scenario_fires": scenario_fires}
+    # Pre-compute holding_trend facts for significant holdings (>8%, non-CASH/MMKT)
+    sig_holdings = [
+        h for h in holdings
+        if (h.get("ticker") or h.get("instrument_id")) not in (None, "", "CASH", "MMKT")
+        and float(h.get("actual_weight") or (100.0 * float(h.get("market_value") or 0.0) / total_mv)) > 8.0
+    ]
+    if sig_holdings:
+        sig_tickers = [h.get("ticker") or h.get("instrument_id") for h in sig_holdings]
+        returns_map = get_benchmark_returns(sig_tickers)
+        for h in sig_holdings:
+            tkr = h.get("ticker") or h.get("instrument_id")
+            w = round(float(h.get("actual_weight") or (100.0 * float(h.get("market_value") or 0.0) / total_mv)), 2)
+            rinfo = returns_map.get(tkr, {})
+            signal_facts.append({
+                "signal_type": "holding_trend",
+                "producer_skill": "portfolio-performance-insight-mvp",
+                "fund": h.get("fund_name") or tkr,
+                "ticker": tkr,
+                "weight_pct": w,
+                "return_ytd": rinfo.get("return_ytd"),
+                "return_1y": rinfo.get("return_1y"),
+                "policy_status": "within",
+                "materiality": "medium",
+            })
+
+    # Deterministic Risk Metrics Panel (5 metrics)
+    all_interactions = get_crm_interactions(client_id, limit=6)
+    dec_rows = [i for i in all_interactions if i.get("initiated_by") or i.get("decision_type") or i.get("decision")]
+    total_dec = len(dec_rows) if dec_rows else len(all_interactions)
+    client_led = sum(
+        1 for i in (dec_rows or all_interactions)
+        if str(i.get("initiated_by") or "").lower() == "client"
+        or str(i.get("decision_type") or i.get("decision") or "").lower() in ("defer", "hold", "no_action")
+    )
+    override_val = f"{client_led} / {total_dec}" if total_dec > 0 else "0 / 0"
+    override_status = "green" if client_led == 0 else ("amber" if client_led == 1 else "red")
+
+    beta_res = get_portfolio_beta(client_id)
+    beta_val = beta_res.get("portfolio_beta") if not beta_res.get("error") else None
+    if beta_val is None:
+        vol_val, vol_status = "Unknown", "amber"
+    elif beta_val <= 0.75:
+        vol_val, vol_status = "Low", "green"
+    elif beta_val <= 1.0:
+        vol_val, vol_status = "Moderate", "amber"
+    else:
+        vol_val, vol_status = "High", "red"
+
+    neg_count = sum(1 for i in all_interactions[:2] if str(i.get("sentiment") or "").lower() in negative)
+    if neg_count >= 2:
+        beh_val, beh_status = "High", "red"
+    elif neg_count == 1:
+        beh_val, beh_status = "Medium", "amber"
+    else:
+        beh_val, beh_status = "Low", "green"
+
+    last_sent = str(all_interactions[0].get("sentiment") or "Neutral") if all_interactions else "Neutral"
+    sent_label = last_sent.replace("_", "-").title()
+    if last_sent.lower() in negative:
+        sent_status = "red"
+    elif last_sent.lower() in ("cautious", "concerned"):
+        sent_status = "amber"
+    else:
+        sent_status = "green"
+
+    has_breach = any(f.get("policy_status") == "breach" and f.get("signal_type") in ("allocation_drift", "portfolio_underweight", "portfolio_overweight", "security_concentration") for f in signal_facts)
+    has_warn = any(f.get("policy_status") == "warning" and f.get("signal_type") in ("allocation_drift", "portfolio_underweight", "portfolio_overweight", "security_concentration") for f in signal_facts)
+    if has_breach:
+        ips_val, ips_status = "Breach", "red"
+    elif has_warn:
+        ips_val, ips_status = "Warning", "amber"
+    else:
+        ips_val, ips_status = "Within Band", "green"
+
+    risk_metrics = [
+        {"label": "Override Score", "value": override_val, "status": override_status},
+        {"label": "Volatility Reactivity", "value": vol_val, "status": vol_status},
+        {"label": "Behavioral Risk", "value": beh_val, "status": beh_status},
+        {"label": "Sentiment", "value": sent_label, "status": sent_status},
+        {"label": "IPS Alignment", "value": ips_val, "status": ips_status},
+    ]
+
+    return {"signal_facts": signal_facts, "scenario_fires": scenario_fires, "risk_metrics": risk_metrics}
 
 
 # Backward-compatible wrapper functions (distinct __name__ for ADK schemas)

@@ -210,22 +210,29 @@ def _resolve_or_error(task: str, client_id: Optional[str]) -> Tuple[Optional[str
     return None, None, _format_envelope(status="needs_input", reply="", question=msg)
 
 
+def _should_force_refresh(task: str, force_refresh: bool = False) -> bool:
+    if force_refresh:
+        return True
+    t = (task or "").lower()
+    return any(k in t for k in ("force_refresh", "force refresh", "nocache"))
+
+
 # ── Step & Sub-Step Cache Helpers ────────────────────────────────────────────
 
-async def _get_or_compute_pre_flight(client_id: str, dt: str) -> dict:
+async def _get_or_compute_pre_flight(client_id: str, dt: str, force_refresh: bool = False) -> dict:
     key = f"pre_flight#{client_id}"
-    cached = get_cached(key, dt)
+    cached = None if force_refresh else get_cached(key, dt)
     if cached:
         return cached
     computed = await asyncio.to_thread(compute_pre_flight, client_id, dt)
     if computed:
         put_cached(key, dt, computed)
-    return computed or {"signal_facts": [], "scenario_fires": {}}
+    return computed or {"signal_facts": [], "scenario_fires": {}, "risk_metrics": []}
 
 
-async def _get_or_compute_snapshot(client_id: str, meeting_id: str, dt: str) -> dict:
+async def _get_or_compute_snapshot(client_id: str, meeting_id: str, dt: str, force_refresh: bool = False) -> dict:
     key = f"step_snapshot#{client_id}"
-    cached = get_cached(key, dt)
+    cached = None if force_refresh else get_cached(key, dt)
     if cached:
         return cached
     res = await asyncio.to_thread(run_portfolio_snapshot, client_id, meeting_id, dt)
@@ -234,17 +241,18 @@ async def _get_or_compute_snapshot(client_id: str, meeting_id: str, dt: str) -> 
     return res or {}
 
 
-async def _get_or_compute_risks(client_id: str, meeting_id: str, dt: str) -> dict:
+async def _get_or_compute_risks(client_id: str, meeting_id: str, dt: str, force_refresh: bool = False) -> dict:
     key = f"step_risks#{client_id}"
-    cached = get_cached(key, dt)
+    cached = None if force_refresh else get_cached(key, dt)
     if cached:
         return cached
-    pre_flight = await _get_or_compute_pre_flight(client_id, dt)
+    pre_flight = await _get_or_compute_pre_flight(client_id, dt, force_refresh=force_refresh)
     cached_sub_signals: list = []
-    for skey in _SUB_INSIGHT_CACHE_KEYS:
-        sub = get_cached(f"{skey}#{client_id}", dt)
-        if sub and isinstance(sub.get("signals"), list):
-            cached_sub_signals.extend(sub["signals"])
+    if not force_refresh:
+        for skey in _SUB_INSIGHT_CACHE_KEYS:
+            sub = get_cached(f"{skey}#{client_id}", dt)
+            if sub and isinstance(sub.get("signals"), list):
+                cached_sub_signals.extend(sub["signals"])
     res = await asyncio.to_thread(
         run_risks_and_opportunities,
         client_id,
@@ -253,18 +261,26 @@ async def _get_or_compute_risks(client_id: str, meeting_id: str, dt: str) -> dic
         pre_flight.get("signal_facts", []),
         cached_sub_signals or None,
     )
+    if res and pre_flight.get("risk_metrics"):
+        from agents_meeting_prep.orchestrator import _merge_risk_metrics
+
+        risk_obj = res.setdefault("risk", {})
+        risk_obj["riskMetrics"] = _merge_risk_metrics(
+            risk_obj.get("riskMetrics", []),
+            pre_flight.get("risk_metrics", []),
+        )
     if res:
         put_cached(key, dt, res)
     return res or {}
 
 
-async def _get_or_compute_angles(client_id: str, meeting_id: str, dt: str) -> dict:
+async def _get_or_compute_angles(client_id: str, meeting_id: str, dt: str, force_refresh: bool = False) -> dict:
     key = f"step_angles#{client_id}"
-    cached = get_cached(key, dt)
+    cached = None if force_refresh else get_cached(key, dt)
     if cached:
         return cached
-    pre_flight = await _get_or_compute_pre_flight(client_id, dt)
-    risks = await _get_or_compute_risks(client_id, meeting_id, dt)
+    pre_flight = await _get_or_compute_pre_flight(client_id, dt, force_refresh=force_refresh)
+    risks = await _get_or_compute_risks(client_id, meeting_id, dt, force_refresh=force_refresh)
     res = await asyncio.to_thread(
         run_discussion_angles,
         client_id,
@@ -278,9 +294,9 @@ async def _get_or_compute_angles(client_id: str, meeting_id: str, dt: str) -> di
     return res or {}
 
 
-async def _get_or_compute_activity(client_id: str, meeting_id: str, dt: str) -> dict:
+async def _get_or_compute_activity(client_id: str, meeting_id: str, dt: str, force_refresh: bool = False) -> dict:
     key = f"step_activity#{client_id}"
-    cached = get_cached(key, dt)
+    cached = None if force_refresh else get_cached(key, dt)
     if cached:
         return cached
     res = await asyncio.to_thread(run_recent_activity, client_id, meeting_id, dt)
@@ -298,15 +314,17 @@ async def _run_specialist_subtool(
     producer_skills: Tuple[str, ...],
     fact_types: Tuple[str, ...],
     title: str,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
 
     # 1. Reuse parent step_risks cache if already warm (0 LLM calls)
-    parent_risks = get_cached(f"step_risks#{cid}", dt)
+    parent_risks = None if refresh else get_cached(f"step_risks#{cid}", dt)
     if parent_risks and isinstance(parent_risks.get("signals"), list):
         filtered = [
             s for s in parent_risks["signals"]
@@ -324,10 +342,10 @@ async def _run_specialist_subtool(
 
     # 2. Check sub-tool cache or compute via ADK runner
     sub_key = f"{cache_prefix}#{cid}"
-    cached_sub = get_cached(sub_key, dt)
+    cached_sub = None if refresh else get_cached(sub_key, dt)
     if not cached_sub:
         try:
-            pre_flight = await _get_or_compute_pre_flight(cid, dt)
+            pre_flight = await _get_or_compute_pre_flight(cid, dt, force_refresh=refresh)
             relevant_facts = [
                 f for f in pre_flight.get("signal_facts", [])
                 if f.get("signal_type") in fact_types
@@ -373,14 +391,16 @@ async def get_portfolio_snapshot(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     try:
-        snapshot = await _get_or_compute_snapshot(cid, mid, dt)
+        snapshot = await _get_or_compute_snapshot(cid, mid, dt, force_refresh=refresh)
         if not snapshot or "holdings" not in snapshot:
             return _format_envelope(
                 status="error",
@@ -435,14 +455,16 @@ async def get_risks_and_opportunities(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     try:
-        risks = await _get_or_compute_risks(cid, mid, dt)
+        risks = await _get_or_compute_risks(cid, mid, dt, force_refresh=refresh)
         if not risks or ("signals" not in risks and "risk" not in risks):
             return _format_envelope(
                 status="error",
@@ -495,14 +517,16 @@ async def get_discussion_angles(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     try:
-        angles_out = await _get_or_compute_angles(cid, mid, dt)
+        angles_out = await _get_or_compute_angles(cid, mid, dt, force_refresh=refresh)
         if not angles_out:
             return _format_envelope(
                 status="error",
@@ -554,14 +578,16 @@ async def get_recent_activity(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     try:
-        activity_out = await _get_or_compute_activity(cid, mid, dt)
+        activity_out = await _get_or_compute_activity(cid, mid, dt, force_refresh=refresh)
         if not activity_out or "activity" not in activity_out:
             return _format_envelope(
                 status="error",
@@ -652,6 +678,7 @@ async def get_meeting_brief(
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
@@ -664,6 +691,7 @@ async def get_meeting_brief(
         )
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     _write_progress(task_id, 10, "Initialising client context...")
     try:
@@ -675,7 +703,7 @@ async def get_meeting_brief(
             meeting_date=dt,
             task_id=task_id,
             progress_fn=_write_progress,
-            force_refresh=False,
+            force_refresh=refresh,
         )
     except Exception as e:
         logger.error("get_meeting_brief failed for %s: %s", cid, e, exc_info=True)
@@ -734,13 +762,15 @@ async def get_holding_trends(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
-    parent = get_cached(f"step_snapshot#{cid}", dt)
+    parent = None if refresh else get_cached(f"step_snapshot#{cid}", dt)
     if parent and "holdings" in parent:
         h = parent["holdings"]
         trends = {"performance": h.get("performance", []), "keyInsight": h.get("keyInsight", [])}
@@ -755,7 +785,7 @@ async def get_holding_trends(
         )
 
     sub_key = f"sub_trends#{cid}"
-    trends = get_cached(sub_key, dt)
+    trends = None if refresh else get_cached(sub_key, dt)
     if not trends:
         try:
             trends = await asyncio.to_thread(run_holding_trends, cid, mid, dt)
@@ -787,14 +817,16 @@ async def get_portfolio_performance_insights(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     return await _run_specialist_subtool(
         task, client_id, meeting_id,
         cache_prefix="sub_perf_insights",
         insight_key="perf",
         producer_skills=("portfolio-performance-insight-mvp",),
-        fact_types=(),
+        fact_types=("holding_trend",),
         title="Portfolio performance insights",
+        force_refresh=force_refresh,
     )
 
 
@@ -809,6 +841,7 @@ async def get_allocation_drift_and_policy_insights(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     return await _run_specialist_subtool(
         task, client_id, meeting_id,
@@ -817,6 +850,7 @@ async def get_allocation_drift_and_policy_insights(
         producer_skills=("allocation-drift-policy-insight-mvp",),
         fact_types=("allocation_drift", "portfolio_underweight", "portfolio_overweight"),
         title="Allocation drift & policy insights",
+        force_refresh=force_refresh,
     )
 
 
@@ -831,6 +865,7 @@ async def get_concentration_risk_insights(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     return await _run_specialist_subtool(
         task, client_id, meeting_id,
@@ -839,6 +874,7 @@ async def get_concentration_risk_insights(
         producer_skills=("concentration-risk-insight-mvp",),
         fact_types=("security_concentration",),
         title="Concentration risk insights",
+        force_refresh=force_refresh,
     )
 
 
@@ -853,6 +889,7 @@ async def get_liquidity_and_goal_insights(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     return await _run_specialist_subtool(
         task, client_id, meeting_id,
@@ -861,6 +898,7 @@ async def get_liquidity_and_goal_insights(
         producer_skills=("liquidity-goal-insight-mvp", "client_monitor"),
         fact_types=("excess_cash", "goal_funding_gap", "retirement_horizon_approaching", "sentiment_trend_negative", "interaction_silence"),
         title="Liquidity & goal insights",
+        force_refresh=force_refresh,
     )
 
 
@@ -875,6 +913,7 @@ async def get_market_and_investment_insights(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     return await _run_specialist_subtool(
         task, client_id, meeting_id,
@@ -883,6 +922,7 @@ async def get_market_and_investment_insights(
         producer_skills=("market-investment-insight-mvp",),
         fact_types=("market_condition_change",),
         title="Market & investment insights",
+        force_refresh=force_refresh,
     )
 
 
@@ -897,14 +937,16 @@ async def get_next_best_actions(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
     try:
-        angles_out = await _get_or_compute_angles(cid, mid, dt)
+        angles_out = await _get_or_compute_angles(cid, mid, dt, force_refresh=refresh)
     except Exception as e:
         return _format_envelope(status="error", reply=f"Failed to compute next best actions: {e}", client_id=cid, meeting_id=mid)
 
@@ -932,13 +974,15 @@ async def get_fund_news(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
         return err
 
+    refresh = _should_force_refresh(task, force_refresh)
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
-    parent = get_cached(f"assist#{cid}", dt)
+    parent = None if refresh else get_cached(f"assist#{cid}", dt)
     if parent and "fundNews" in parent:
         news_list = parent.get("fundNews", [])
         return _format_envelope(
@@ -952,7 +996,7 @@ async def get_fund_news(
         )
 
     sub_key = f"sub_fund_news#{cid}"
-    news_out = get_cached(sub_key, dt)
+    news_out = None if refresh else get_cached(sub_key, dt)
     if not news_out:
         try:
             news_out = await asyncio.to_thread(run_fund_news, cid, mid, dt)
