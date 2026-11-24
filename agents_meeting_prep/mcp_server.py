@@ -601,24 +601,71 @@ async def get_recent_activity(
     )
 
 
+_FS_CLIENT = None
+
+
+def _get_firestore():
+    global _FS_CLIENT
+    if _FS_CLIENT is None:
+        from google.cloud import firestore
+        from agents_meeting_prep.tools import PROJECT
+
+        _FS_CLIENT = firestore.Client(project=PROJECT)
+    return _FS_CLIENT
+
+
+def _write_progress(
+    task_id: Optional[str],
+    pct: int,
+    message: str,
+    done: bool = False,
+    result: Optional[dict] = None,
+) -> None:
+    if not task_id:
+        return
+    try:
+        from google.cloud import firestore
+
+        doc: Dict[str, Any] = {
+            "pct": pct,
+            "message": message,
+            "done": done,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        if result is not None:
+            doc["result"] = result
+        _get_firestore().collection("meeting_prep_progress").document(task_id).set(doc)
+    except Exception as e:
+        logger.warning("Firestore progress write failed for task_id=%s: %s", task_id, e)
+
+
 @mcp.tool(
     description=(
         "Assemble the complete end-to-end advisor meeting brief combining client profile, "
         "portfolio snapshot, risk signals, discussion angles, next best actions, activity timeline, "
         "and fund news. Use only when a full meeting brief is requested, not for single-section questions. "
-        "Pass the advisor request as task (with client ID or name), and optional client_id and meeting_id."
+        "Pass the advisor request as task (with client ID or name), and optional client_id, meeting_id, and task_id."
     )
 )
 async def get_meeting_brief(
     task: str,
     client_id: Optional[str] = None,
     meeting_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> dict:
     cid, cname, err = _resolve_or_error(task, client_id)
     if err:
+        _write_progress(
+            task_id,
+            100,
+            "Failed" if err.get("status") == "error" else "Needs input",
+            done=True,
+            result=err,
+        )
         return err
 
     mid, dt = ensure_meeting_context(cid, cname, meeting_id)
+    _write_progress(task_id, 10, "Initialising client context...")
     try:
         from agents_meeting_prep.orchestrator import run_meeting_prep
 
@@ -626,10 +673,19 @@ async def get_meeting_brief(
             client_id=cid,
             meeting_id=mid,
             meeting_date=dt,
+            task_id=task_id,
+            progress_fn=_write_progress,
             force_refresh=False,
         )
     except Exception as e:
         logger.error("get_meeting_brief failed for %s: %s", cid, e, exc_info=True)
+        _write_progress(
+            task_id,
+            100,
+            "Failed",
+            done=True,
+            result={"status": "error", "message": str(e)},
+        )
         return _format_envelope(
             status="error",
             reply=f"Failed to assemble full meeting brief: {e}",
@@ -652,7 +708,7 @@ async def get_meeting_brief(
         f"Top agenda focus: '{top_title}'. PowerPoint brief generated."
     )
 
-    return _format_envelope(
+    final_envelope = _format_envelope(
         status=status,
         reply=reply,
         client_id=cid,
@@ -661,6 +717,8 @@ async def get_meeting_brief(
         confidence=0.95 if status == "ok" else 0.88,
         evidence=["meeting-brief-agent", f"Client:{cid}", "BigQuery:wealth-advisor-cs"],
     )
+    _write_progress(task_id, 100, "Meeting brief ready", done=True, result=final_envelope)
+    return final_envelope
 
 
 # ── The 8 Granular MCP Sub-Tools ─────────────────────────────────────────────

@@ -44,6 +44,7 @@ _stub("google.auth.transport.requests", {"Request": MagicMock()})
 _stub("google.cloud")
 _stub("google.cloud.bigquery", {"Client": MagicMock(), "QueryJobConfig": MagicMock(), "ScalarQueryParameter": MagicMock(), "ArrayQueryParameter": MagicMock()})
 _stub("google.cloud.dataplex_v1", {"CatalogServiceClient": MagicMock(), "EntryView": MagicMock(), "GetEntryRequest": MagicMock(), "ListEntriesRequest": MagicMock()})
+_stub("google.cloud.firestore", {"Client": MagicMock(), "SERVER_TIMESTAMP": "SERVER_TIMESTAMP"})
 _stub("google.adk")
 _stub("google.adk.agents", {"LlmAgent": MagicMock()})
 _stub("google.adk.models", {"Gemini": type("Gemini", (), {"__init__": lambda self, **kw: None})})
@@ -273,3 +274,46 @@ def test_stateless_http_mcp_endpoint(fake_gcp):
     assert r2.status_code == 200
     payload = json.loads(r2.json()["result"]["content"][0]["text"])
     assert payload["status"] == "ok" and len(payload["data"]["result"]["nextBestActions"]) == 1
+
+
+def test_meeting_brief_progress_tracking(fake_gcp, monkeypatch):
+    writes = []
+
+    class _FakeDoc:
+        def __init__(self, doc_id):
+            self.doc_id = doc_id
+
+        def set(self, payload):
+            writes.append((self.doc_id, payload))
+
+    class _FakeCol:
+        def document(self, doc_id):
+            return _FakeDoc(doc_id)
+
+    class _FakeFS:
+        def collection(self, name):
+            assert name == "meeting_prep_progress"
+            return _FakeCol()
+
+    monkeypatch.setattr(mcp_server, "_FS_CLIENT", _FakeFS())
+
+    # Cold run with task_id -> checkpoints 10, 30, 50, 70, 85, 95, 100
+    res_with_id = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan", task_id="abc123xyz"))
+    assert res_with_id["status"] == "ok"
+    assert [w[1]["pct"] for w in writes] == [10, 30, 50, 70, 85, 95, 100]
+    assert all(w[0] == "abc123xyz" for w in writes)
+    assert writes[-1][1]["done"] is True
+    assert writes[-1][1]["result"] == res_with_id
+
+    # Without task_id -> 0 Firestore writes
+    writes.clear()
+    res_no_id = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan"))
+    assert res_no_id["status"] == "ok"
+    assert writes == []
+
+    # Warm cache hit with task_id -> 10, 100 (done=True, result present)
+    res_warm = asyncio.run(mcp_server.get_meeting_brief("Brief for Nathan Kerrigan", task_id="warm123"))
+    assert res_warm["status"] == "ok"
+    assert [w[1]["pct"] for w in writes] == [10, 100]
+    assert writes[-1][1]["done"] is True
+    assert writes[-1][1]["result"] == res_warm

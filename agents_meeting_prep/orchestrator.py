@@ -42,24 +42,17 @@ async def run_meeting_prep(
 ) -> dict:
     """Run the full meeting prep pipeline using BigQuery cache + agent_runner."""
 
-    def _emit(message: str, pct: int, done: bool = False, result: dict = None):
+    def _emit(pct: int, message: str, done: bool = False, result: dict = None):
         if progress_fn and task_id:
-            progress_fn(task_id, message, pct, done, result)
+            progress_fn(task_id, pct, message, done=done, result=result)
 
     today = meeting_date or date.today().isoformat()
 
-    _emit("Checking cache", 10)
     _cache_key = cache_key or f"assist#{client_id}"
     if not force_refresh:
         cached = get_cached(_cache_key, today, user_id)
         if cached:
             logger.info("BQ Cache hit for cache_key=%s", _cache_key)
-            _emit(
-                "Loaded from cache",
-                100,
-                done=True,
-                result={"type": "meeting_prep", "data": cached, "meeting_id": meeting_id},
-            )
             return cached
 
     # Pre-compute — deterministic checks via Context Set tools
@@ -72,16 +65,15 @@ async def run_meeting_prep(
     pre_flight = pre_flight or {"signal_facts": [], "scenario_fires": {}}
 
     # Step 1 — Portfolio Snapshot
-    _emit("Building portfolio snapshot", 35)
     step1_key = f"step_snapshot#{client_id}"
     holdings_section = None if force_refresh else get_cached(step1_key, today, user_id)
     if not holdings_section:
         holdings_section = await asyncio.to_thread(run_portfolio_snapshot, client_id, meeting_id, today)
         if holdings_section:
             put_cached(step1_key, today, holdings_section, user_id)
+    _emit(30, "Analysing portfolio composition and performance...")
 
     # Step 2 — Risks & Opportunities (reuses any pre-cached sub-skill signals)
-    _emit("Analysing risks and opportunities", 55)
     step2_key = f"step_risks#{client_id}"
     risks_output = None if force_refresh else get_cached(step2_key, today, user_id)
     if not risks_output:
@@ -101,11 +93,11 @@ async def run_meeting_prep(
         )
         if risks_output:
             put_cached(step2_key, today, risks_output, user_id)
+    _emit(50, "Evaluating risk exposure and market signals...")
     signals = (risks_output or {}).get("signals", [])
     risk_section = (risks_output or {}).get("risk", {"riskMetrics": []})
 
     # Steps 3 + 4 — Parallel
-    _emit("Generating discussion angles and activity", 70)
     step3_key = f"step_angles#{client_id}"
     step4_key = f"step_activity#{client_id}"
     angles_output = None if force_refresh else get_cached(step3_key, today, user_id)
@@ -142,11 +134,14 @@ async def run_meeting_prep(
             if activity_output:
                 put_cached(step4_key, today, activity_output, user_id)
 
+    _emit(70, "Generating advisory talking points...")
+    _emit(85, "Incorporating recent client interactions...")
+
     angles_output = angles_output or {}
     activity_output = activity_output or {}
 
     # Step 5 — Brief Assembler
-    _emit("Assembling meeting brief", 88)
+    _emit(95, "Compiling meeting intelligence...")
     brief = await asyncio.to_thread(
         assemble_meeting_brief,
         client_id,
@@ -173,10 +168,4 @@ async def run_meeting_prep(
         logger.warning("PPTX generation failed: %s", e)
 
     put_cached(_cache_key, today, brief, user_id)
-    _emit(
-        "Complete",
-        100,
-        done=True,
-        result={"type": "meeting_prep", "data": brief, "meeting_id": meeting_id},
-    )
     return brief
